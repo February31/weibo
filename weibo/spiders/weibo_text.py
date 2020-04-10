@@ -2,12 +2,21 @@
 import scrapy
 import json
 import re
+from weibo.items import TextItem
+from urllib.parse import urlencode
 
 
-class MWeiboSpiderSpider(scrapy.Spider):
+class WeiboTextSpider(scrapy.Spider):
     name = 'm_weibo_spider'
     allowed_domains = ['m.weibo.cn/', 'weibo.com', 'weibo.cn']
     start_urls = ['https://passport.weibo.cn/signin/login']
+    url = ""
+    page = 0
+
+    def __init__(self, keyword=None, *args, **kwargs):
+        super(WeiboTextSpider, self).__init__(*args, **kwargs)
+        print("==============", type(keyword))
+        self.keywords = keyword
 
     def parse(self, response):
         url = "https://passport.weibo.cn/sso/login"
@@ -29,26 +38,38 @@ class MWeiboSpiderSpider(scrapy.Spider):
 
     def login_success(self, response):
         print("=" * 20)
-        # &page=3
-        url = 'https://m.weibo.cn/api/container/getIndex?containerid=100103type%3D1%26q%3D%E7%96%AB%E6%83%85' \
-              '&page_type=searchall '
+        url = 'https://m.weibo.cn/api/container/getIndex?containerid=100103&%s&page_type=searchall'
+        # 拼接第一条微博爬取链接
+        key = {
+            "type": 1
+        }
+        q = " "
+        for i in self.keywords:
+            q = q.join(str(i))
+        key["q"] = q
+        url = url % urlencode(key)
+        self.url = url
         yield scrapy.Request(url, callback=self.crawl_data)
 
     def crawl_data(self, response):
         res = json.loads(response.text)
         items = res.get("data").get("cards")
         for item in items:
-            print("!!!!!!!")
             if item.get("card_type") == 9:
 
                 mblog = item.get("mblog")
                 weibo_id = mblog.get("idstr")
-                comment_count = mblog.get("comments_count")
-                # user = mblog.get("user")
-                # user_id = user.get("id")
-                # user_name = user.get("screen_name")
-                # if weibo_id not in id_set:
-                #     id_set.add(weibo_id)
+                # 点赞
+                attitudes_count = mblog["attitudes_count"]
+                # 评论
+                comments_count = mblog["comments_count"]
+                # 转发
+                reposts_count = mblog["reposts_count"]
+                # 时间
+                created_at = mblog["created_at"]
+                user = mblog.get("user")
+                user_id = user.get("id")
+                followers_count = user["followers_count"]
                 if mblog.get("longText"):
                     rough_results = mblog.get("longText")["longTextContent"]
                     # 去掉网址
@@ -59,29 +80,22 @@ class MWeiboSpiderSpider(scrapy.Spider):
                     rough_results = mblog.get("text")
                     # 去掉a标签和span标签
                     result = re.sub('<.*?>|</.*?>|<s.*?>', '', rough_results)
-                    # "===============" +
-                    # print(weibo_id + " " + str(user_id) + " " + user_name + " " + result)
                     print(result)
-                # if comment_count > 0:
-                #     url = "https://m.weibo.cn/comments/hotflow?id=" + weibo_id + "&mid=" + weibo_id + "&max_id_type=0"
-                #     scrapy.Request(url, callback=self.crawl_comment)
-        url = 'https://m.weibo.cn/api/container/getIndex?containerid=100103type%3D1%26q%3D%E7%96%AB%E6%83%85' \
-              '&page_type=searchall'
-        yield scrapy.Request(url, callback=self.crawl_data)
+                text = TextItem()
+                text["weibo_id"] = weibo_id
+                text["user_id"] = user_id
+                text["comments_count"] = comments_count
+                text["attitudes_count"] = attitudes_count
+                text["reposts_count"] = reposts_count
+                text["created_at"] = created_at
+                text["text"] = result
+                text["followers_count"] = followers_count
+                yield text
+
+        while self.page < 100:
+            self.page = self.page+1
+            url = 'https://m.weibo.cn/api/container/getIndex?containerid=100103type%3D1%26q%3D%E7%96%AB%E6%83%85' \
+                  '&page_type=searchall'+"&page="+str(self.page)
+            yield scrapy.Request(url, callback=self.crawl_data)
 
 
-    def crawl_comment(self, response):
-        print("*****************下面是评论")
-        res = json.loads(response.text)
-        max_id = res.get("data").get("max_id")
-        max_id_type = res.get("data").get("max_id")
-        items = res.get("data").get("data")
-        for item in items:
-            rough_results = item.get("text")
-            # 去掉a标签和span标签
-            result = re.sub('<.*?>|</.*?>|<s.*?>', '', rough_results)
-            print(result)
-        print("*****************上面是评论")
-        # if max_id>0:
-        #     url = ""
-        #     yield
